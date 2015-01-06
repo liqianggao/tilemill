@@ -16,6 +16,21 @@ command = Bones.Command.extend();
 command.description = 'export project';
 command.usage = '<project> <export>';
 
+command.options['name'] = {
+    'title': 'name=[name]',
+    'description': 'MBTiles name.'
+};
+
+command.options['version'] = {
+    'title': 'version=[version]',
+    'description': 'MBTiles version.'
+};
+
+command.options['level'] = {
+    'title': 'level=[level]',
+    'description': 'Map level (1F|2F|etc).'
+};
+
 command.options['format'] = {
     'title': 'format=[format]',
     'description': 'Export format (png|pdf|svg|mbtiles|upload|sync).'
@@ -51,6 +66,11 @@ command.options['height'] = {
 command.options['url'] = {
     'title': 'url=[url]',
     'description': 'URL to PUT updates to.'
+};
+
+command.options['attribution'] = {
+    'attribution': 'url=[attribution]',
+    'description': 'Attribution to PUT updates to.'
 };
 
 command.options['log'] = {
@@ -191,8 +211,14 @@ command.prototype.initialize = function(plugin, callback) {
     // Upload format does not require loaded project.
     if (opts.format === 'upload') return this[opts.format](this.complete);
 
+    var attributes={id:opts.project};
+    if (!_(opts.level).isUndefined()) {
+	    attributes = _(attributes).extend({
+            level:opts.level,
+        });
+    }
     // Load project, localize and call export function.
-    var model = new models.Project({id:opts.project});
+    var model = new models.Project(attributes);
     Step(function() {
         if (!cmd.opts.quiet) process.stderr.write('Loading project...');
         Bones.utils.fetch({model:model}, this);
@@ -208,6 +234,12 @@ command.prototype.initialize = function(plugin, callback) {
             if (l.attributes.Datasource && l.attributes.Datasource.dbname)
                 l.attributes.Datasource.max_size = require('os').cpus().length;
         });
+        model.attributes = _(model.attributes).extend({
+            minzoom: !_(opts.minzoom).isUndefined() ? opts.minzoom : model.get('minzoom'),
+            maxzoom: !_(opts.maxzoom).isUndefined() ? opts.maxzoom : model.get('maxzoom'),
+            bounds: !_(opts.bbox).isUndefined() ? opts.bbox : model.get('bounds'),
+            scale: !_(opts.scale).isUndefined() ? opts.scale : model.get('scale'),
+        });
         if (!cmd.opts.quiet) process.stderr.write('Localizing project...');
         model.localize(model.toJSON(), this);
     }, function(err) {
@@ -218,25 +250,27 @@ command.prototype.initialize = function(plugin, callback) {
 
         if (!cmd.opts.quiet) process.stderr.write(' done.\n');
         model.mml = _(model.mml).extend({
-            name: model.mml.name || model.id,
-            version: model.mml.version || '1.0.0',
+            name: !_(opts.name).isUndefined() ? opts.name : model.mml.name || model.id,
+            version: !_(opts.version).isUndefined() ? opts.version: model.mml.version || '1.0.0',
             minzoom: !_(opts.minzoom).isUndefined() ? opts.minzoom : model.get('minzoom'),
             maxzoom: !_(opts.maxzoom).isUndefined() ? opts.maxzoom : model.get('maxzoom'),
             bounds: !_(opts.bbox).isUndefined() ? opts.bbox : model.get('bounds'),
             scale: !_(opts.scale).isUndefined() ? opts.scale : model.get('scale'),
-            metatile: !_(opts.metatile).isUndefined() ? opts.metatile : model.get('metatile')
+            metatile: !_(opts.metatile).isUndefined() ? opts.metatile : model.get('metatile'),
+            attribution: !_(opts.attribution).isUndefined() ? opts.attribution : model.get('attribution'),
         });
 
         // Unset map center if outside bounds.
-        var validCenter = (function(center, bounds, minzoom, maxzoom) {
+        var validCenter = (function(center, bounds, minzoom, maxzoom, scale) {
             if (center[0] < bounds[0] ||
                 center[0] > bounds[2] ||
                 center[1] < bounds[1] ||
                 center[1] > bounds[3]) return false;
             if (center[2] < minzoom) return false;
             if (center[2] > maxzoom) return false;
+            center[2] += scale - 1;
             return true;
-        })(model.mml.center, model.mml.bounds, model.mml.minzoom, model.mml.maxzoom);
+        })(model.mml.center, model.mml.bounds, model.mml.minzoom, model.mml.maxzoom, model.mml.scale);
         if (!validCenter) delete model.mml.center;
 
         switch (opts.format) {
